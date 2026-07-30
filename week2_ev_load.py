@@ -31,11 +31,22 @@ def get_base_load_profile():
 # ─── EV charging profile ───────────────────────────────────────────────────────
 def get_ev_charging_profile(penetration_pct, charger_kw=7.2):
     ev_schedule = np.array([
-        0.00, 0.00, 0.00, 0.00, 0.00, 0.00,
-        0.00, 0.00, 0.00, 0.00, 0.00, 0.00,
-        0.00, 0.00, 0.00, 0.02, 0.10, 0.35,
-        0.60, 0.75, 0.70, 0.45, 0.20, 0.05
+        0.00, 0.00, 0.00, 0.00, 0.00, 0.00, # 0-5 overnight low
+        0.00, 0.00, 0.00, 0.00, 0.00, 0.00, # 6-11 morning
+        0.00, 0.00, 0.00, 0.02, 0.10, 0.35, # 12-17 afternoon ramp
+        0.60, 0.75, 0.70, 0.45, 0.20, 0.05  # 18-23 evening peak
     ])
+
+    # Fraction of EV owners charging each hour (sums roughly to ~4-5 hrs)
+    # Peak is 6pm-9pm — the "commuter plug-in" window
+    # function takes in two inputs
+    # penetration_pct is what fraction of homes own an EV (0.10 = 10% of homes have EVs)
+    # charger_kw is the power of the charger in kW (7.2 kW is a common Level 2 charger)
+
+
+    # the 24 numbers represent the fraction of EVs charging at each hour. For example, at 5pm (hour 17), 60% of EVs are charging. At 10pm (hour 22), only 5% are still charging.
+
+    # Power added per home with an EV (MW)
     ev_load_per_home_mw = (charger_kw / 1000) * penetration_pct * ev_schedule
     return ev_load_per_home_mw
 
@@ -43,7 +54,7 @@ def get_ev_charging_profile(penetration_pct, charger_kw=7.2):
 # ─── Estimate homes per bus ────────────────────────────────────────────────────
 def estimate_homes_per_bus(net):
     homes_per_bus = 150
-    print(f"Assuming {homes_per_bus} homes per bus (Long Island residential estimate)")
+    print(f"Assuming {homes_per_bus} homes per bus (Long Island residential estimate)") # engineering assumption that each bus serves 150 homes
     return homes_per_bus
 
 
@@ -59,10 +70,13 @@ def run_ev_simulation(net, base_profile, ev_profile, label="ev_10pct"):
     for h in range(24):
         scaled_p = base_p * base_profile[h]
         scaled_q = base_q * base_profile[h]
-        ev_addition_mw = ev_profile[h] * homes
+        ev_addition_mw = ev_profile[h] * homes 
 
         net.load.p_mw   = scaled_p + ev_addition_mw
-        net.load.q_mvar = scaled_q
+        net.load.q_mvar = scaled_q # EVs are near unity PF with smart chargers
+    # 92-95 - ev_addition_mw takes  the EV load per home for this hour and multiplies it by 150 homes to get total EV load per bus. Then adds it on top of the regular residential load.
+    # reactive power (q_mvar) is not increased because most EV chargers are designed to operate at near unity power factor, meaning they don't draw much reactive power.
+    
 
         v_row = {"hour": h}
         l_row = {"hour": h}
@@ -82,7 +96,8 @@ def run_ev_simulation(net, base_profile, ev_profile, label="ev_10pct"):
 
         voltage_records.append(v_row)
         line_load_records.append(l_row)
-
+    # loops through all 24 hours, runs the power flow, and records the bus voltages and line loadings for each hour.
+    # Restore
     net.load.p_mw   = base_p
     net.load.q_mvar = base_q
 
@@ -184,7 +199,7 @@ if __name__ == "__main__":
         ev_profile = get_ev_charging_profile(penetration)
         v, l = run_ev_simulation(net, base_profile, ev_profile, label=label)
         results[label] = (v, l)
-
+    # dictionary mapping each scenario name to its penetration level. The loop runs the simualtion four times, once per scenario, and stores all the results so they can be compared and plotted  later.
     print_violation_report(results)
 
     print("\nGenerating comparison plots...")

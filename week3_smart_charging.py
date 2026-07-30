@@ -29,7 +29,7 @@ def get_base_load_profile():
     ])
 
 
-def get_dumb_ev_profile(penetration=0.50, charger_kw=7.2):
+def get_dumb_ev_profile(penetration=0.50, charger_kw=7.2): # same function as in week2_ev_load.py just renamed "dumb" in contrast to smart. Default pen is 50% to focus on worst case scenario
     """Everyone plugs in when they get home — worst case."""
     ev_schedule = np.array([
         0.00, 0.00, 0.00, 0.00, 0.00, 0.00,
@@ -40,27 +40,34 @@ def get_dumb_ev_profile(penetration=0.50, charger_kw=7.2):
     return (charger_kw / 1000) * penetration * ev_schedule
 
 
-def get_smart_ev_profile(penetration=0.50, charger_kw=7.2):
+def get_smart_ev_profile(penetration=0.50, charger_kw=7.2): # First calculates the dumb charging profile and adds up all 24 values to get the total energy delivered per home per day. This number is critical — smart charging must deliver the exact same total energy, just at different times. Same energy, different schedule.
     """
     Valley-fill smart charging: same total energy, spread into
     overnight low-demand hours (11pm - 6am).
     """
     dumb = get_dumb_ev_profile(penetration, charger_kw)
-    total_energy = dumb.sum()
+    total_energy = dumb.sum()  # total EV energy per home per day (MW·h scale)
+
+    # Distribute charging evenly in the overnight window (hours 23, 0, 1, 2, 3, 4, 5, 6)
+    # This is the "valley" in the load profile
 
     smart = np.zeros(24)
     overnight_hours = [23, 0, 1, 2, 3, 4, 5, 6]
     energy_per_hour = total_energy / len(overnight_hours)
     for h in overnight_hours:
         smart[h] = energy_per_hour
+    
+    # creates an empty 24 hour array then fills in only the overnight hours 11pm to 6am. Divides the total daily energy equally across the 8 hours. Valley-fill algo - instead of everyone pilling onto the grid at 7pm, charging is spread across the overnight low demand window. Every car still gets fully charged.
+
 
     print(f"\nDumb charging total energy  : {dumb.sum():.6f} MW·h/home")
     print(f"Smart charging total energy : {smart.sum():.6f} MW·h/home")
     print("(Must be equal — same energy, just shifted in time)")
     return smart
+    # verifies both profiles deliver identical total energy
 
 
-def run_simulation(net, base_profile, ev_profile, label):
+def run_simulation(net, base_profile, ev_profile, label): # same power flow engine as week 1 and 2. Difference is this function is generalized and it acceps any ev_profile passed in.
     base_p = net.load.p_mw.values.copy()
     base_q = net.load.q_mvar.values.copy()
     homes  = 150
@@ -115,6 +122,8 @@ def plot_dumb_vs_smart(base_profile, dumb_ev, smart_ev, results_dumb, results_sm
     axes[0].fill_between(hours, base_profile, alpha=0.5, color="#2a9d8f", label="Base residential load")
     axes[0].plot(hours, total_dumb,  color="#e63946", linewidth=2, label="+ Dumb EV charging")
     axes[0].plot(hours, total_smart, color="#457b9d", linewidth=2, linestyle="--", label="+ Smart EV charging")
+     # top charts show the total feeder load for both scenarios overlaid on the base residential load. The filled area is your baseline. 
+    # Red line is dumb charging spiking dangerously at 7pm. Blue dashed line is smart charging staying flat and manageable all day.
     axes[0].set_ylabel("Load Multiplier")
     axes[0].set_title("Total Feeder Load Profile — Dumb vs Smart Charging (50% EV Penetration)")
     axes[0].legend(fontsize=9)
@@ -160,6 +169,8 @@ def print_improvement_summary(results_dumb, results_smart):
     smart_min_v = results_smart[0][v_cols].values.min()
     dumb_max_l  = results_dumb[1][l_cols].values.max()
     smart_max_l = results_smart[1][l_cols].values.max()
+    # pulls the single worst voltage and worst line loading ascross all buses and all 24 hours for each scenario. 
+    # .values.min() and .values.max() are used to get the absolute worst case across the entire DataFrame.
     dumb_v_viols  = (results_dumb[0][v_cols].min(axis=1)  < 0.95).sum()
     smart_v_viols = (results_smart[0][v_cols].min(axis=1) < 0.95).sum()
     dumb_l_viols  = (results_dumb[1][l_cols].max(axis=1)  > 80).sum()
@@ -180,7 +191,8 @@ def print_improvement_summary(results_dumb, results_smart):
     print("\nConclusion: Smart charging shifts load to off-peak hours,")
     print("reducing peak stress without reducing EV convenience.")
     print("This is the core principle behind LIPA's demand response programs.\n")
-
+# min bus voltage and voltage improvement prints the improvement summary table on the terminal. :<35 left aligns text in a 35 character wide colunn. :>8.4f right aligns a number in 8 characteres with 4 decimal places.
+# + in >+8.4f forces a plus sign to show on positive numbers so the improvemnet is obvious at a glance
 
 if __name__ == "__main__":
     net          = pn.case33bw()
@@ -189,7 +201,7 @@ if __name__ == "__main__":
     smart_ev     = get_smart_ev_profile(penetration=0.50)
 
     print("\nRunning dumb charging simulation (50% EV)...")
-    results_dumb  = run_simulation(net, base_profile, dumb_ev,  label="dumb_50pct")
+    results_dumb  = run_simulation(net, base_profile, dumb_ev,  label="dumb_50pct")  # runs the simulation twice, once for dumb and once for smart. Each time it saves the results to a csv file in the results folder.
 
     print("\nRunning smart charging simulation (50% EV)...")
     results_smart = run_simulation(net, base_profile, smart_ev, label="smart_50pct")

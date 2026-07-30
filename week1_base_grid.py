@@ -21,16 +21,19 @@ import matplotlib.cm as cm
 import os
 
 # ─── Output folder ────────────────────────────────────────────────────────────
-os.makedirs("results", exist_ok=True)
+os.makedirs("results", exist_ok=True) # creates a folder called results to save to output files
+                                      # exist_ok=True means it wont crash when if it already exists
 
 # ─── 1. Build the IEEE 33-bus network ─────────────────────────────────────────
 def build_base_network():
     """Load the standard IEEE 33-bus radial distribution test feeder."""
-    net = pn.case33bw()   # Built into pandapower — no download needed
-    print(f"Network loaded: {len(net.bus)} buses, {len(net.line)} lines")
+    net = pn.case33bw()  # Built into pandapower — no download needed + loads the IEEE 33 bus test network
+                         # 33 nodes connected by 32 lines in a radial layout
+    print(f"Network loaded: {len(net.bus)} buses, {len(net.line)} lines") # prints confirmation that the network loaded + 
     print(f"Total base load: {net.load.p_mw.sum():.3f} MW, {net.load.q_mvar.sum():.3f} MVAr")
     return net
-
+# line 32-33 - net.bus is a table for all buses, len() counts them, p_mw is the active power load in MW, q_mvar is the reactive power 
+# .sum() adds the whole column together, :.3f formats the number to 3 decimal places
 
 # ─── 2. Realistic 24-hour residential load profile ────────────────────────────
 def get_load_profile():
@@ -46,6 +49,9 @@ def get_load_profile():
         0.73, 0.72, 0.74, 0.78, 0.85, 0.95, 1.00, 0.98, 0.95, 0.88, 0.78, 0.68
     ]
     return np.array(profile)
+# get_load_profile() - 24 numbers, one per hour. Each is a multiplier representing how much of the maximum load the grid carries at that hour
+# for ex, at 3am, the load is 50% of the base load or at 6pm its 100%. 
+# Then I convert the list to a numpy array so I can do math on it later (multiply by the base load to get actual load at that hour)
 
 
 # ─── 3. Run hourly power flow ─────────────────────────────────────────────────
@@ -58,7 +64,8 @@ def run_hourly_simulation(net, load_profile, label="baseline"):
     hours = range(24)
     base_p = net.load.p_mw.values.copy()
     base_q = net.load.q_mvar.values.copy()
-
+# 65-66 - saves the original load values before modifying them each hour, so we can restore them later. 
+# .values.copy() makes a copy of the array so we don't accidentally modify the original data in net.load.p_mw and net.load.q_mvar
     voltage_records   = []   # one row per hour
     line_load_records = []
 
@@ -68,20 +75,24 @@ def run_hourly_simulation(net, load_profile, label="baseline"):
         # Scale all loads by the hourly multiplier
         net.load.p_mw   = base_p * multiplier
         net.load.q_mvar = base_q * multiplier
-
+        # loops through all 24 hours, scaling every load on every bus by the multiplier for that hour. 
+        # For example, if the base load is 1 MW and the multiplier is 0.5, the load becomes 0.5 MW.
+        
         # Run Newton-Raphson power flow
         pp.runpp(net, algorithm="nr", numba=False)
+        # runs the power flow calculation using the Newton-Raphson method (algorithm="nr" means Newton-Raphson - adjusts all voltages simultaneously each iteration, converges in 3-5 steps).
+        # numba=False turns off a speed optimization thast causes issues on some machines.
 
         # --- voltages (per-unit) for every bus ---
         v_row = {"hour": h, "multiplier": multiplier}
         for bus_idx in net.res_bus.index:
-            v_row[f"bus_{bus_idx}_pu"] = net.res_bus.at[bus_idx, "vm_pu"]
-        voltage_records.append(v_row)
+            v_row[f"bus_{bus_idx}_pu"] = net.res_bus.at[bus_idx, "vm_pu"] # after the power flow runs, net.res_bus contains the results. vm_pu is voltage magnitude in per-unit. 1.0 is perfect, 0.95 is the ANSI lower limit, below 0.90 is critical
+        voltage_records.append(v_row) # records every bus voltage for this hour
 
         # --- line loading (%) for every line ---
         l_row = {"hour": h, "multiplier": multiplier}
         for line_idx in net.res_line.index:
-            l_row[f"line_{line_idx}_pct"] = net.res_line.at[line_idx, "loading_percent"]
+            l_row[f"line_{line_idx}_pct"] = net.res_line.at[line_idx, "loading_percent"] # does the same thing but for lines. loading_percent is how loaded each wire is as a percentage of its thermal limit. Above 80% is a warning, above 100% means the wire is overheating.
         line_load_records.append(l_row)
 
     # Restore original loads
